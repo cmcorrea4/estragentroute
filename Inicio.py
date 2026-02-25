@@ -115,7 +115,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "obtener_datos_moldes",
-            "description": "Devuelve un JSON con datos de desempeño energético, SECn y productividad desagregado por moldes.",
+            "description": "Devuelve un JSON con el desempeño energético y productivo desglosado por moldes. Úsala para analizar un molde específico o comparar métricas entre moldes: Consumo en kWh, Producción Conforme en kg, Productividad Efectiva en kg/h, Demanda estable en kW, indicadores SEC (SECn, SECg, SECs, SECb), análisis de Brechas (producción, calidad, proceso + tecnología), nivel de desempeño, nivel de eficiencia y área asociada al molde.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,7 +131,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "obtener_datos_referencias",
-            "description": "Devuelve un JSON con los consumos y productividades segmentado por referencias/productos (SKUs).",
+            "description": "Devuelve un JSON con el desempeño energético y productivo desglosado por referencias/productos (SKUs). Úsala para conocer métricas de una referencia específica o compararlas: Consumo (kWh), Producción conforme (kg), Productividad efectiva (kg/h), Demanda estable (kW), todos los indicadores SEC (SECn, SECg, SECs, SECb), análisis de Brechas (producción, calidad, proceso+tecnología), Desempeño general y nivel de Eficiencia por área.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -147,7 +147,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "obtener_linea_base",
-            "description": "Devuelve un JSON con las métricas asociadas a la línea base y benchmarks.",
+            "description": "Devuelve datos del modelo de línea base (pendiente e intercepto), consumo actual, y un análisis CUSUM (Suma Acumulada) semanal de energía (kWh) y costos (dinero). Úsala cuando el usuario pregunte por ahorros, sobrecostos de energía, diferencias entre energía esperada vs consumida, análisis de tendencia (CUSUM) o parámetros del modelo (pendiente/intercepto).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -360,3 +360,4 @@ else:
         if st.button("🗑️ Limpiar Historial"):
             st.session_state.chat_history_agent = []
             st.rerun()
+
