@@ -99,7 +99,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "obtener_resumen_general",
-            "description": "Devuelve un JSON con el resumen general y el consumo energético total en el periodo consultado.",
+            "description": "Devuelve un JSON detallado con el resumen general a nivel de cada orden de producción en el rango de fechas. Úsala para consultar datos como: ID de orden, máquina (cceId), tiempos totales y productivos (pdnTotalTime, pdnEffectiveTime), tiempos y porcentajes de parada (totalStopTime, stopTimePercentage), consumo bruto, producción total/conforme/rechazos (totalProduction, noComplaintProduction), productividades (realProductivity, effectiveProductivity), demanda estable, indicadores SEC desglosados (secN, secG, secS, secB) y todas las brechas específicas de cada orden procesada.",
             "parameters": {
                 "type": "object",
                 "properties": {
