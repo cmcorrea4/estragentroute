@@ -302,9 +302,9 @@ else:
     # Recomendaciones / Ejemplos
     with st.expander("💡 Ejemplos de preguntas para probar la inteligencia del Agente"):
         st.write("""
-        - "¿Cuál es el resumen y el consumo de todas las métricas en este periodo?" *(Llamará a obtener_resumen_general)*
-        - "Compárame el SECn de los moldes versus lo que dice cada referencia." *(Podría llamar a moldes y referencias en paralelo)*
-        - "¿Cuáles son los moldes con mayor tiempo de parada comparándolos con las metas de línea base?" *(Llamaría a obtener_datos_moldes y obtener_linea_base)*
+        - "¿Cuál molde tiene mayor SECn?" 
+        - "¿Qué referencias tienen mayor consumo energético?" 
+        - "¿Cuál es la línea base de consumo energético?" 
         """)
         
     if "chat_history_agent" not in st.session_state:
