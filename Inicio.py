@@ -244,8 +244,8 @@ def consultar_agente(pregunta, client, username, password, date_start_str, date_
 # ─────────────────────────────────────────────
 # INTERFAZ (UI) STREAMLIT
 # ─────────────────────────────────────────────
-st.title("🏭 Diagnóstico de gestión energética--ESTRA")
-st.markdown("**Powered by OpenAI Function Calling (Native)**")
+st.title("🏭 Asistente de gestión energética--ESTRA")
+st.markdown("**Powered by SUME & SOSPOL**")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
