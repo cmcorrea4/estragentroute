@@ -24,7 +24,7 @@ ENDPOINTS = {
     "linea_base": "https://energy-api-628964750053.us-east1.run.app/test-baseline",
 }
 
-MODEL = "gpt-4-turbo"
+MODEL = "gpt-5.4-nano-2026-03-17"   #
 
 # ─────────────────────────────────────────────
 # UTILIDADES
