@@ -2,8 +2,11 @@ import streamlit as st
 import requests
 import json
 import base64
+import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 from openai import OpenAI
+import plotly.graph_objects as go
 
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN DE LA PÁGINA
@@ -34,7 +37,36 @@ ENDPOINT_LABELS = {
 MODEL = "gpt-4-turbo"
 
 # ─────────────────────────────────────────────
-# UTILIDADES
+# COLORES / ESTILO COMPARTIDO
+# ─────────────────────────────────────────────
+COLORS = {
+    "naranja":   "#f97316",
+    "azul":      "#3b82f6",
+    "verde":     "#22c55e",
+    "gris":      "#6b7280",
+    "fondo":     "#0f172a",
+    "superficie":"#1e293b",
+    "borde":     "#334155",
+    "texto":     "#f1f5f9",
+    "subtexto":  "#94a3b8",
+}
+
+LAYOUT_BASE = dict(
+    paper_bgcolor=COLORS["fondo"],
+    plot_bgcolor =COLORS["superficie"],
+    font         =dict(color=COLORS["texto"], family="monospace", size=13),
+    margin       =dict(l=60, r=30, t=60, b=60),
+    xaxis=dict(gridcolor=COLORS["borde"], zerolinecolor=COLORS["borde"]),
+    yaxis=dict(gridcolor=COLORS["borde"], zerolinecolor=COLORS["borde"]),
+    legend=dict(
+        bgcolor=COLORS["superficie"],
+        bordercolor=COLORS["borde"],
+        borderwidth=1,
+    ),
+)
+
+# ─────────────────────────────────────────────
+# UTILIDADES GENERALES
 # ─────────────────────────────────────────────
 
 def get_week_start(date):
@@ -104,7 +136,7 @@ def cargar_json_por_intencion(intencion):
 
 
 # ─────────────────────────────────────────────
-# ROUTER + ANÁLISIS CON OPENAI DIRECTO
+# ROUTER + ANÁLISIS CON OPENAI
 # ─────────────────────────────────────────────
 
 ROUTER_PROMPT = """
@@ -166,19 +198,143 @@ def analizar_con_gpt(pregunta, datos_json, client):
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR
+# HELPERS EXTRACCIÓN DE GRÁFICAS
 # ─────────────────────────────────────────────
-st.title("🏭 Diagnóstico de gestión energética--ESTRA")
+
+def extraer_pcld(moldes_json: dict):
+    pcld   = moldes_json.get("PCLD", {})
+    points = pcld.get("dataPoints", [])
+    reg    = pcld.get("regression", {})
+    if not points:
+        return None, None, None, None
+    x = [p.get("Suma de Producción Conforme [kg]", 0) for p in points]
+    y = [p.get("Suma de Consumo [kWh]", 0)            for p in points]
+    return x, y, reg.get("a"), reg.get("b")
+
+
+def extraer_pcdd(moldes_json: dict):
+    pcdd   = moldes_json.get("PCDD", {})
+    points = pcdd.get("dataPoints", [])
+    curva  = pcdd.get("curva", [])
+    if not points:
+        return None, None, None, None
+    x_pts   = [p.get("Promedio de Productividad Efectiva [kg/h]", 0) for p in points]
+    y_pts   = [p.get("SECn (costo energetico) (Molde)", 0)           for p in points]
+    x_curva = [c.get("flujo", 0)        for c in curva]
+    y_curva = [c.get("SECnesperado", 0) for c in curva]
+    return x_pts, y_pts, x_curva, y_curva
+
+
+def extraer_curva(moldes_json: dict):
+    curva = moldes_json.get("PCDD", {}).get("curva", [])
+    if not curva:
+        return None, None
+    return [c.get("flujo", 0) for c in curva], [c.get("SECnesperado", 0) for c in curva]
+
+
+# ─────────────────────────────────────────────
+# GRÁFICOS PLOTLY
+# ─────────────────────────────────────────────
+
+def grafico_pcld(x, y, a, b):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=y,
+        mode="markers",
+        marker=dict(color=COLORS["naranja"], size=10,
+                    line=dict(color="white", width=1), symbol="circle"),
+        name="Datos reales",
+        hovertemplate="<b>Producción:</b> %{x:.1f} kg<br><b>Consumo:</b> %{y:.2f} kWh<extra></extra>",
+    ))
+    if a is not None and b is not None:
+        x_reg = np.linspace(min(x), max(x), 100)
+        y_reg = a * x_reg + b
+        fig.add_trace(go.Scatter(
+            x=x_reg.tolist(), y=y_reg.tolist(),
+            mode="lines",
+            line=dict(color=COLORS["azul"], width=2, dash="dash"),
+            name=f"Regresión: y = {a:.4f}·x + {b:.2f}",
+            hovertemplate="<b>Regresión:</b> %{y:.2f} kWh<extra></extra>",
+        ))
+    fig.update_layout(
+        **LAYOUT_BASE,
+        title=dict(text="📈 PCLD — Producción Conforme vs Consumo Energético",
+                   font=dict(size=16, color=COLORS["naranja"])),
+        xaxis_title="Producción Conforme [kg]",
+        yaxis_title="Consumo [kWh]",
+        height=500,
+    )
+    return fig
+
+
+def grafico_pcdd(x_pts, y_pts, x_curva, y_curva):
+    fig = go.Figure()
+    if x_curva and y_curva:
+        fig.add_trace(go.Scatter(
+            x=x_curva, y=y_curva,
+            mode="lines",
+            line=dict(color=COLORS["verde"], width=2.5),
+            name="Curva SECn esperado",
+            hovertemplate="<b>Flujo:</b> %{x:.2f} kg/h<br><b>SECn esperado:</b> %{y:.4f}<extra></extra>",
+        ))
+    fig.add_trace(go.Scatter(
+        x=x_pts, y=y_pts,
+        mode="markers",
+        marker=dict(color=COLORS["naranja"], size=11,
+                    line=dict(color="white", width=1), symbol="diamond"),
+        name="Moldes (datos reales)",
+        hovertemplate="<b>Productividad:</b> %{x:.2f} kg/h<br><b>SECn real:</b> %{y:.4f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **LAYOUT_BASE,
+        title=dict(text="⚡ PCDD — SECn vs Productividad Efectiva por Molde",
+                   font=dict(size=16, color=COLORS["naranja"])),
+        xaxis_title="Productividad Efectiva [kg/h]",
+        yaxis_title="SECn — Costo Energético [kWh/kg]",
+        height=500,
+    )
+    return fig
+
+
+def grafico_curva(x, y):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=y,
+        mode="lines+markers",
+        line=dict(color=COLORS["verde"], width=3),
+        marker=dict(color=COLORS["verde"], size=6, line=dict(color="white", width=1)),
+        name="SECn esperado",
+        fill="tozeroy",
+        fillcolor="rgba(34,197,94,0.08)",
+        hovertemplate="<b>Flujo:</b> %{x:.2f} kg/h<br><b>SECn esperado:</b> %{y:.4f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **LAYOUT_BASE,
+        title=dict(text="📐 Curva de Referencia — SECn Esperado vs Flujo",
+                   font=dict(size=16, color=COLORS["naranja"])),
+        xaxis_title="Flujo [kg/h]",
+        yaxis_title="SECn Esperado [kWh/kg]",
+        height=500,
+    )
+    return fig
+
+
+# ─────────────────────────────────────────────
+# SIDEBAR  (compartido entre todas las pestañas)
+# ─────────────────────────────────────────────
+st.title("🏭 Diagnóstico de gestión energética — ESTRA")
 st.markdown("**Obtén datos del sistema energético y analízalos con IA**")
 
 with st.sidebar:
     st.header("⚙️ Panel de Control")
 
+    # ── Credenciales ──────────────────────────────────────────────────────
     st.subheader("🔌 Credenciales del Endpoint")
 
     if "json_summary" not in st.session_state:
         api_username = st.text_input("👤 Usuario:", placeholder="Ingresa tu usuario")
-        api_password = st.text_input("🔒 Contraseña:", type="password", placeholder="Ingresa tu contraseña")
+        api_password = st.text_input("🔒 Contraseña:", type="password",
+                                     placeholder="Ingresa tu contraseña")
         endpoint_configured = bool(api_username and api_password)
         if endpoint_configured:
             st.success("✅ Credenciales configuradas")
@@ -192,6 +348,7 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── Fechas ────────────────────────────────────────────────────────────
     st.subheader("📅 Filtro de Fechas")
     filter_type = st.radio("Tipo de filtro:", ["Por semana", "Por rango de fechas"])
 
@@ -219,8 +376,8 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── API Key OpenAI ────────────────────────────────────────────────────
     st.subheader("🤖 OpenAI API Key")
-
     if "openai_api_key" not in st.session_state:
         openai_api_key = st.text_input("🔑 API Key:", type="password", placeholder="sk-...")
         if openai_api_key:
@@ -236,6 +393,7 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── Botón obtener datos ───────────────────────────────────────────────
     if st.button("🔌 Obtener Datos del Sistema", use_container_width=True,
                  disabled=not (endpoint_configured and dates_valid)):
         with st.spinner("Consultando endpoint de energía..."):
@@ -245,15 +403,17 @@ with st.sidebar:
                 date_end.strftime("%Y-%m-%d")
             )
             if datos_json is not None:
-                st.session_state.json_summary   = datos_json
-                st.session_state.api_username   = api_username
-                st.session_state.api_password   = api_password
-                st.session_state.date_start     = date_start
-                st.session_state.date_end       = date_end
-                st.session_state.filter_type    = filter_type
+                st.session_state.json_summary  = datos_json
+                st.session_state.api_username  = api_username
+                st.session_state.api_password  = api_password
+                st.session_state.date_start    = date_start
+                st.session_state.date_end      = date_end
+                st.session_state.filter_type   = filter_type
                 if filter_type == "Por semana":
                     st.session_state.selected_week = selected_week
-                for k in ["json_moldes", "json_referencias", "json_linea_base"]:
+                # Limpiar cachés de otros endpoints
+                for k in ["json_moldes", "json_referencias", "json_linea_base",
+                          "json_moldes_viz"]:
                     if k in st.session_state:
                         del st.session_state[k]
                 consultar_endpoint.clear()
@@ -262,10 +422,14 @@ with st.sidebar:
             else:
                 st.error(f"❌ {error}")
 
+    # Estado de caché
     if "json_summary" in st.session_state:
         st.success("🟢 Datos listos")
         if "date_start" in st.session_state:
-            st.info(f"📅 {st.session_state.date_start.strftime('%d/%m/%Y')} → {st.session_state.date_end.strftime('%d/%m/%Y')}")
+            st.info(
+                f"📅 {st.session_state.date_start.strftime('%d/%m/%Y')} → "
+                f"{st.session_state.date_end.strftime('%d/%m/%Y')}"
+            )
         st.markdown("**Endpoints en caché:**")
         for k, label in ENDPOINT_LABELS.items():
             if f"json_{k}" in st.session_state:
@@ -273,13 +437,24 @@ with st.sidebar:
     else:
         st.warning("🔴 Sin datos del sistema")
 
+    st.markdown("---")
+    if st.button("🔄 Actualizar Todos los Datos", use_container_width=True):
+        consultar_endpoint.clear()
+        for key in ["json_summary", "json_moldes", "json_referencias", "json_linea_base",
+                    "json_moldes_viz", "chat_history", "api_username", "api_password"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
 
 # ─────────────────────────────────────────────
-# CONTENIDO PRINCIPAL
+# CONTENIDO PRINCIPAL — DOS PESTAÑAS
 # ─────────────────────────────────────────────
 
 if "json_summary" not in st.session_state:
-    st.info("👆 Configura las credenciales, selecciona el rango de fechas y haz clic en 'Obtener Datos del Sistema'")
+    # ── Pantalla de bienvenida ────────────────────────────────────────────
+    st.info("👆 Configura las credenciales, selecciona el rango de fechas y haz clic en "
+            "'Obtener Datos del Sistema'")
     st.markdown("---")
     st.subheader("ℹ️ Cómo funciona")
     st.markdown("""
@@ -296,159 +471,282 @@ if "json_summary" not in st.session_state:
     """)
 
 else:
-    datos_json_summary = st.session_state.json_summary
+    # ── Pestañas principales ──────────────────────────────────────────────
+    tab_ia, tab_viz = st.tabs(["🤖 Análisis IA", "📊 Visualizaciones"])
 
-    st.success("✅ Datos del sistema energético cargados")
+    # ════════════════════════════════════════════════════════════════════════
+    # PESTAÑA 1 — ANÁLISIS IA  (código original intacto)
+    # ════════════════════════════════════════════════════════════════════════
+    with tab_ia:
+        datos_json_summary = st.session_state.json_summary
 
-    if "date_start" in st.session_state:
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            st.info(f"📅 Desde: **{st.session_state.date_start.strftime('%d/%m/%Y')}**")
-        with col2:
-            st.info(f"📅 Hasta: **{st.session_state.date_end.strftime('%d/%m/%Y')}**")
-        with col3:
-            dias = (st.session_state.date_end - st.session_state.date_start).days + 1
-            st.metric("📊 Días", dias)
+        st.success("✅ Datos del sistema energético cargados")
 
-    st.header("📊 Datos del Resumen General")
-    with st.expander("🗂️ Ver JSON del endpoint `/test-summary`", expanded=False):
-        st.json(datos_json_summary)
+        if "date_start" in st.session_state:
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                st.info(f"📅 Desde: **{st.session_state.date_start.strftime('%d/%m/%Y')}**")
+            with col2:
+                st.info(f"📅 Hasta: **{st.session_state.date_end.strftime('%d/%m/%Y')}**")
+            with col3:
+                dias = (st.session_state.date_end - st.session_state.date_start).days + 1
+                st.metric("📊 Días", dias)
 
-    # ─────────────────────────────────────────────
-    # ANÁLISIS IA
-    # ─────────────────────────────────────────────
-    st.header("🤖 Análisis IA con Router Inteligente")
+        st.header("📊 Datos del Resumen General")
+        with st.expander("🗂️ Ver JSON del endpoint `/test-summary`", expanded=False):
+            st.json(datos_json_summary)
 
-    st.markdown("""
-    | Tu pregunta menciona... | Endpoint que se usa |
-    |---|---|
-    | moldes, SECn, productividad de molde | 🔩 `/test-mold` |
-    | referencia, producto, SKU | 🏷️ `/test-reference` |
-    | línea base, baseline, benchmark | 📐 `/test-baseline` |
-    | general, resumen, consumo total | 📊 `/test-summary` |
-    """)
+        st.header("🤖 Análisis IA con Router Inteligente")
+        st.markdown("""
+        | Tu pregunta menciona... | Endpoint que se usa |
+        |---|---|
+        | moldes, SECn, productividad de molde | 🔩 `/test-mold` |
+        | referencia, producto, SKU | 🏷️ `/test-reference` |
+        | línea base, baseline, benchmark | 📐 `/test-baseline` |
+        | general, resumen, consumo total | 📊 `/test-summary` |
+        """)
 
-    if "openai_api_key" not in st.session_state:
-        st.warning("⚠️ Configura tu API Key de OpenAI en la barra lateral.")
-    else:
-        client = OpenAI(api_key=st.session_state.openai_api_key)
+        if "openai_api_key" not in st.session_state:
+            st.warning("⚠️ Configura tu API Key de OpenAI en la barra lateral.")
+        else:
+            client = OpenAI(api_key=st.session_state.openai_api_key)
 
-        st.subheader("💡 Ejemplos de preguntas:")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("""
-            **🔩 Moldes:**
-            - ¿Qué moldes tienen la mayor productividad efectiva?
-            - ¿Cuál molde tiene mayor SECn?
-            - ¿En qué fechas se trabajó el molde 15252?
+            st.subheader("💡 Ejemplos de preguntas:")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("""
+                **🔩 Moldes:**
+                - ¿Qué moldes tienen la mayor productividad efectiva?
+                - ¿Cuál molde tiene mayor SECn?
+                - ¿En qué fechas se trabajó el molde 15252?
 
-            **🏷️ Referencias:**
-            - ¿Qué referencias tienen mayor consumo energético?
-            - ¿Cuáles son los productos con mayor tiempo de paro?
-            """)
-        with col2:
-            st.markdown("""
-            **📐 Línea Base:**
-            - ¿Cuál es la línea base de consumo energético?
-            - ¿Qué referencias están por encima del benchmark?
+                **🏷️ Referencias:**
+                - ¿Qué referencias tienen mayor consumo energético?
+                - ¿Cuáles son los productos con mayor tiempo de paro?
+                """)
+            with col2:
+                st.markdown("""
+                **📐 Línea Base:**
+                - ¿Cuál es la línea base de consumo energético?
+                - ¿Qué referencias están por encima del benchmark?
 
-            **📊 General:**
-            - ¿Qué información contiene el dataset?
-            - ¿Cuál es el consumo total del periodo?
-            """)
+                **📊 General:**
+                - ¿Qué información contiene el dataset?
+                - ¿Cuál es el consumo total del periodo?
+                """)
 
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
 
-        st.subheader("❓ Consulta los datos con IA")
-        user_question = st.text_input(
-            "Escribe tu pregunta:",
-            placeholder="Ej: ¿Qué moldes tienen mayor SECn?",
-            key="user_input"
+            st.subheader("❓ Consulta los datos con IA")
+            user_question = st.text_input(
+                "Escribe tu pregunta:",
+                placeholder="Ej: ¿Qué moldes tienen mayor SECn?",
+                key="user_input"
+            )
+
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                ask_button = st.button("🚀 Analizar", type="primary")
+            with col2:
+                if st.button("🗑️ Limpiar historial"):
+                    st.session_state.chat_history = []
+                    st.rerun()
+
+            if ask_button and user_question:
+                with st.spinner("🔍 Detectando tipo de consulta..."):
+                    intencion = clasificar_intencion(user_question, client)
+
+                endpoint_label = ENDPOINT_LABELS[intencion]
+                st.info(f"🎯 Router → **{endpoint_label}** (`{ENDPOINTS[intencion]}`)")
+
+                if intencion == "summary":
+                    datos_para_analisis = datos_json_summary
+                    carga_error = None
+                else:
+                    with st.spinner(f"📡 Consultando {endpoint_label}..."):
+                        datos_para_analisis, carga_error = cargar_json_por_intencion(intencion)
+
+                if carga_error:
+                    st.error(f"❌ Error al cargar {endpoint_label}: {carga_error}")
+                elif datos_para_analisis is not None:
+                    with st.expander(
+                        f"🗂️ JSON recibido de {endpoint_label} (que analiza GPT)",
+                        expanded=False
+                    ):
+                        st.json(datos_para_analisis)
+
+                    with st.spinner("🤖 GPT analizando el JSON..."):
+                        respuesta = analizar_con_gpt(user_question, datos_para_analisis, client)
+
+                    st.session_state.chat_history.append({
+                        "question": user_question,
+                        "answer":   respuesta,
+                        "endpoint": endpoint_label,
+                        "json":     datos_para_analisis
+                    })
+                    st.rerun()
+
+            # Historial de análisis
+            if st.session_state.chat_history:
+                st.subheader("💬 Análisis Realizados")
+                for i, chat in enumerate(reversed(st.session_state.chat_history)):
+                    label = (
+                        f"❓ {chat['question'][:60]}..."
+                        if len(chat['question']) > 60
+                        else f"❓ {chat['question']}"
+                    )
+                    with st.expander(label, expanded=(i == 0)):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.write("**Pregunta:**")
+                            st.write(chat["question"])
+                        with col2:
+                            st.caption(f"Fuente: {chat['endpoint']}")
+                        st.write("**Respuesta:**")
+                        st.write(chat["answer"])
+                        with st.expander("🗂️ Ver JSON analizado", expanded=False):
+                            st.json(chat["json"])
+                        st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PESTAÑA 2 — VISUALIZACIONES PCLD / PCDD / CURVA
+    # ════════════════════════════════════════════════════════════════════════
+    with tab_viz:
+        st.header("📊 Visualización de Gráficas Energéticas")
+        st.markdown(
+            "Selecciona el tipo de gráfico para consultar el endpoint `/test-mold` "
+            "y visualizar los datos de forma interactiva."
         )
 
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            ask_button = st.button("🚀 Analizar", type="primary")
-        with col2:
-            if st.button("🗑️ Limpiar historial"):
-                st.session_state.chat_history = []
-                st.rerun()
+        username   = st.session_state.get("api_username", "")
+        password   = st.session_state.get("api_password", "")
+        date_start = st.session_state.get("date_start")
+        date_end   = st.session_state.get("date_end")
 
-        if ask_button and user_question:
+        # ── Selector ─────────────────────────────────────────────────────
+        tipo_grafico = st.radio(
+            "🎛️ Selecciona el tipo de visualización:",
+            ["PCLD — Producción vs Consumo",
+             "PCDD — SECn vs Productividad",
+             "Curva — SECn Esperado vs Flujo"],
+            horizontal=True,
+        )
+        clave_map = {
+            "PCLD — Producción vs Consumo":    "PCLD",
+            "PCDD — SECn vs Productividad":    "PCDD",
+            "Curva — SECn Esperado vs Flujo":  "Curva",
+        }
+        clave = clave_map[tipo_grafico]
 
-            # 1. Router: clasificar intención
-            with st.spinner("🔍 Detectando tipo de consulta..."):
-                intencion = clasificar_intencion(user_question, client)
+        # ── Botón cargar datos de moldes ──────────────────────────────────
+        col_btn, col_status = st.columns([1, 3])
+        with col_btn:
+            refrescar = st.button("🔄 Cargar / Actualizar datos", type="primary",
+                                  key="btn_viz_refresh")
 
-            endpoint_label = ENDPOINT_LABELS[intencion]
-            st.info(f"🎯 Router → **{endpoint_label}** (`{ENDPOINTS[intencion]}`)")
+        if refrescar or "json_moldes_viz" not in st.session_state:
+            with st.spinner("📡 Consultando `/test-mold`..."):
+                datos, error = consultar_endpoint(
+                    "moldes", username, password,
+                    date_start.strftime("%Y-%m-%d") if date_start else None,
+                    date_end.strftime("%Y-%m-%d")   if date_end   else None,
+                )
+            if error:
+                st.error(f"❌ Error al consultar el endpoint: {error}")
+                st.stop()
+            st.session_state["json_moldes_viz"] = datos
 
-            # 2. Cargar JSON bajo demanda
-            if intencion == "summary":
-                datos_para_analisis = datos_json_summary
-                carga_error = None
+        moldes_json = st.session_state.get("json_moldes_viz", {})
+
+        with col_status:
+            if moldes_json:
+                st.success("✅ Datos de moldes listos")
             else:
-                with st.spinner(f"📡 Consultando {endpoint_label}..."):
-                    datos_para_analisis, carga_error = cargar_json_por_intencion(intencion)
+                st.error("❌ No se obtuvieron datos del endpoint")
+                st.stop()
 
-            if carga_error:
-                st.error(f"❌ Error al cargar {endpoint_label}: {carga_error}")
+        with st.expander("🗂️ Ver JSON crudo de `/test-mold`", expanded=False):
+            st.json(moldes_json)
 
-            elif datos_para_analisis is not None:
+        st.divider()
 
-                # 3. Mostrar JSON que va a analizar GPT
-                with st.expander(f"🗂️ JSON recibido de {endpoint_label} (que analiza GPT)", expanded=False):
-                    st.json(datos_para_analisis)
+        # ── Renderizar según selección ────────────────────────────────────
+        if clave == "PCLD":
+            x, y, a, b = extraer_pcld(moldes_json)
+            if x is None:
+                st.error("❌ No se encontró la sección 'PCLD' en la respuesta del endpoint.")
+            else:
+                # Métricas
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("📦 Total producción", f"{sum(x):,.1f} kg")
+                c2.metric("⚡ Total consumo",    f"{sum(y):,.2f} kWh")
+                c3.metric("📊 SECn medio",
+                          f"{sum(y)/sum(x):.4f} kWh/kg" if sum(x) else "—")
+                if a is not None:
+                    c4.metric("📈 Pendiente reg.", f"{a:.4f} kWh/kg")
 
-                # 4. Analizar directamente sobre el JSON
-                with st.spinner("🤖 GPT analizando el JSON..."):
-                    respuesta = analizar_con_gpt(user_question, datos_para_analisis, client)
+                st.plotly_chart(grafico_pcld(x, y, a, b), use_container_width=True)
 
-                st.session_state.chat_history.append({
-                    "question": user_question,
-                    "answer":   respuesta,
-                    "endpoint": endpoint_label,
-                    "json":     datos_para_analisis
-                })
-                st.rerun()
+                with st.expander("📋 Ver datos tabulados (PCLD)", expanded=False):
+                    df = pd.DataFrame({
+                        "Producción Conforme [kg]": x,
+                        "Consumo [kWh]": y,
+                    })
+                    df["SECn puntual [kWh/kg]"] = [
+                        yi / xi if xi else None for xi, yi in zip(x, y)
+                    ]
+                    st.dataframe(df.style.format("{:.3f}"), use_container_width=True)
 
-        # Historial
-        if st.session_state.chat_history:
-            st.subheader("💬 Análisis Realizados")
+        elif clave == "PCDD":
+            x_pts, y_pts, x_curva, y_curva = extraer_pcdd(moldes_json)
+            if x_pts is None:
+                st.error("❌ No se encontró la sección 'PCDD' en la respuesta del endpoint.")
+            else:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("🔩 Nº moldes",          len(x_pts))
+                c2.metric("⚡ SECn mínimo",         f"{min(y_pts):.4f}")
+                c3.metric("⚡ SECn máximo",         f"{max(y_pts):.4f}")
+                c4.metric("🏃 Prod. máx. [kg/h]",  f"{max(x_pts):.2f}")
 
-            for i, chat in enumerate(reversed(st.session_state.chat_history)):
-                label = f"❓ {chat['question'][:60]}..." if len(chat['question']) > 60 else f"❓ {chat['question']}"
-                with st.expander(label, expanded=(i == 0)):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.write("**Pregunta:**")
-                        st.write(chat["question"])
-                    with col2:
-                        st.caption(f"Fuente: {chat['endpoint']}")
+                st.plotly_chart(grafico_pcdd(x_pts, y_pts, x_curva, y_curva),
+                                use_container_width=True)
 
-                    st.write("**Respuesta:**")
-                    st.write(chat["answer"])
+                with st.expander("📋 Ver datos tabulados (PCDD)", expanded=False):
+                    df = pd.DataFrame({
+                        "Productividad Efectiva [kg/h]": x_pts,
+                        "SECn real [kWh/kg]":            y_pts,
+                    })
+                    st.dataframe(df.style.format("{:.4f}"), use_container_width=True)
 
-                    with st.expander("🗂️ Ver JSON analizado", expanded=False):
-                        st.json(chat["json"])
-                    st.divider()
+        elif clave == "Curva":
+            x, y = extraer_curva(moldes_json)
+            if x is None:
+                st.error("❌ No se encontró la sección 'curva' en la respuesta del endpoint.")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🔢 Puntos de curva",    len(x))
+                c2.metric("📉 SECn mín. esperado", f"{min(y):.4f}")
+                c3.metric("📈 Flujo máximo",        f"{max(x):.2f} kg/h")
 
-    st.markdown("---")
-    if st.button("🔄 Actualizar Todos los Datos", use_container_width=True):
-        consultar_endpoint.clear()
-        for key in ["json_summary", "json_moldes", "json_referencias", "json_linea_base",
-                    "chat_history", "api_username", "api_password"]:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.rerun()
+                st.plotly_chart(grafico_curva(x, y), use_container_width=True)
 
-# Footer
+                with st.expander("📋 Ver datos tabulados (Curva)", expanded=False):
+                    df = pd.DataFrame({
+                        "Flujo [kg/h]":           x,
+                        "SECn Esperado [kWh/kg]": y,
+                    })
+                    st.dataframe(df.style.format("{:.4f}"), use_container_width=True)
+
+
+# ─────────────────────────────────────────────
+# FOOTER
+# ─────────────────────────────────────────────
 st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: gray; font-size: 14px;'>
-    🏭 ESTRA - Sistema Integrado de Análisis Energético con IA | Powered by SUME & SOSPOL
+    🏭 ESTRA — Sistema Integrado de Análisis Energético con IA | Powered by SUME & SOSPOL
     </div>
     """,
     unsafe_allow_html=True
