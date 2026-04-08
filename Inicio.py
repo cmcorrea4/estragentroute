@@ -4,9 +4,9 @@ import json
 import base64
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from openai import OpenAI
-import plotly.graph_objects as go
 
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN DE LA PÁGINA
@@ -37,33 +37,29 @@ ENDPOINT_LABELS = {
 MODEL = "gpt-4-turbo"
 
 # ─────────────────────────────────────────────
-# COLORES / ESTILO COMPARTIDO
+# PALETA DE COLORES
 # ─────────────────────────────────────────────
-COLORS = {
-    "naranja":   "#f97316",
-    "azul":      "#3b82f6",
-    "verde":     "#22c55e",
-    "gris":      "#6b7280",
-    "fondo":     "#0f172a",
-    "superficie":"#1e293b",
-    "borde":     "#334155",
-    "texto":     "#f1f5f9",
-    "subtexto":  "#94a3b8",
-}
+C_NARANJA  = "#f97316"
+C_AZUL     = "#3b82f6"
+C_VERDE    = "#22c55e"
+C_FONDO    = "#0f172a"
+C_PANEL    = "#1e293b"
+C_BORDE    = "#334155"
+C_TEXTO    = "#f1f5f9"
 
-LAYOUT_BASE = dict(
-    paper_bgcolor=COLORS["fondo"],
-    plot_bgcolor =COLORS["superficie"],
-    font         =dict(color=COLORS["texto"], family="monospace", size=13),
-    margin       =dict(l=60, r=30, t=60, b=60),
-    xaxis=dict(gridcolor=COLORS["borde"], zerolinecolor=COLORS["borde"]),
-    yaxis=dict(gridcolor=COLORS["borde"], zerolinecolor=COLORS["borde"]),
-    legend=dict(
-        bgcolor=COLORS["superficie"],
-        bordercolor=COLORS["borde"],
-        borderwidth=1,
-    ),
-)
+def aplicar_estilo(fig, ax):
+    """Aplica la paleta oscura ESTRA a cualquier figura matplotlib."""
+    fig.patch.set_facecolor(C_FONDO)
+    ax.set_facecolor(C_PANEL)
+    ax.tick_params(colors=C_TEXTO, labelsize=10)
+    ax.xaxis.label.set_color(C_TEXTO)
+    ax.yaxis.label.set_color(C_TEXTO)
+    ax.title.set_color(C_NARANJA)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(C_BORDE)
+    ax.grid(True, color=C_BORDE, linewidth=0.6, linestyle="--", alpha=0.7)
+    ax.set_axisbelow(True)
+
 
 # ─────────────────────────────────────────────
 # UTILIDADES GENERALES
@@ -198,10 +194,10 @@ def analizar_con_gpt(pregunta, datos_json, client):
 
 
 # ─────────────────────────────────────────────
-# HELPERS EXTRACCIÓN DE GRÁFICAS
+# EXTRACCIÓN DE DATOS PARA GRÁFICAS
 # ─────────────────────────────────────────────
 
-def extraer_pcld(moldes_json: dict):
+def extraer_pcld(moldes_json):
     pcld   = moldes_json.get("PCLD", {})
     points = pcld.get("dataPoints", [])
     reg    = pcld.get("regression", {})
@@ -212,7 +208,7 @@ def extraer_pcld(moldes_json: dict):
     return x, y, reg.get("a"), reg.get("b")
 
 
-def extraer_pcdd(moldes_json: dict):
+def extraer_pcdd(moldes_json):
     pcdd   = moldes_json.get("PCDD", {})
     points = pcdd.get("dataPoints", [])
     curva  = pcdd.get("curva", [])
@@ -225,7 +221,7 @@ def extraer_pcdd(moldes_json: dict):
     return x_pts, y_pts, x_curva, y_curva
 
 
-def extraer_curva(moldes_json: dict):
+def extraer_curva(moldes_json):
     curva = moldes_json.get("PCDD", {}).get("curva", [])
     if not curva:
         return None, None
@@ -233,94 +229,70 @@ def extraer_curva(moldes_json: dict):
 
 
 # ─────────────────────────────────────────────
-# GRÁFICOS PLOTLY
+# GRÁFICOS MATPLOTLIB
 # ─────────────────────────────────────────────
 
 def grafico_pcld(x, y, a, b):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y,
-        mode="markers",
-        marker=dict(color=COLORS["naranja"], size=10,
-                    line=dict(color="white", width=1), symbol="circle"),
-        name="Datos reales",
-        hovertemplate="<b>Producción:</b> %{x:.1f} kg<br><b>Consumo:</b> %{y:.2f} kWh<extra></extra>",
-    ))
+    fig, ax = plt.subplots(figsize=(10, 5))
+    aplicar_estilo(fig, ax)
+
+    ax.scatter(x, y, color=C_NARANJA, s=80, zorder=5,
+               edgecolors="white", linewidths=0.8, label="Datos reales")
+
     if a is not None and b is not None:
-        x_reg = np.linspace(min(x), max(x), 100)
+        x_arr = np.array(x)
+        x_reg = np.linspace(x_arr.min(), x_arr.max(), 200)
         y_reg = a * x_reg + b
-        fig.add_trace(go.Scatter(
-            x=x_reg.tolist(), y=y_reg.tolist(),
-            mode="lines",
-            line=dict(color=COLORS["azul"], width=2, dash="dash"),
-            name=f"Regresión: y = {a:.4f}·x + {b:.2f}",
-            hovertemplate="<b>Regresión:</b> %{y:.2f} kWh<extra></extra>",
-        ))
-    fig.update_layout(
-        **LAYOUT_BASE,
-        title=dict(text="📈 PCLD — Producción Conforme vs Consumo Energético",
-                   font=dict(size=16, color=COLORS["naranja"])),
-        xaxis_title="Producción Conforme [kg]",
-        yaxis_title="Consumo [kWh]",
-        height=500,
-    )
+        ax.plot(x_reg, y_reg, color=C_AZUL, linewidth=2,
+                linestyle="--", label=f"Regresión: y = {a:.4f}·x + {b:.2f}")
+
+    ax.set_xlabel("Producción Conforme [kg]", fontsize=11)
+    ax.set_ylabel("Consumo [kWh]", fontsize=11)
+    ax.set_title("PCLD — Producción Conforme vs Consumo Energético", fontsize=13, pad=12)
+    ax.legend(facecolor=C_PANEL, edgecolor=C_BORDE, labelcolor=C_TEXTO, fontsize=10)
+    fig.tight_layout()
     return fig
 
 
 def grafico_pcdd(x_pts, y_pts, x_curva, y_curva):
-    fig = go.Figure()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    aplicar_estilo(fig, ax)
+
     if x_curva and y_curva:
-        fig.add_trace(go.Scatter(
-            x=x_curva, y=y_curva,
-            mode="lines",
-            line=dict(color=COLORS["verde"], width=2.5),
-            name="Curva SECn esperado",
-            hovertemplate="<b>Flujo:</b> %{x:.2f} kg/h<br><b>SECn esperado:</b> %{y:.4f}<extra></extra>",
-        ))
-    fig.add_trace(go.Scatter(
-        x=x_pts, y=y_pts,
-        mode="markers",
-        marker=dict(color=COLORS["naranja"], size=11,
-                    line=dict(color="white", width=1), symbol="diamond"),
-        name="Moldes (datos reales)",
-        hovertemplate="<b>Productividad:</b> %{x:.2f} kg/h<br><b>SECn real:</b> %{y:.4f}<extra></extra>",
-    ))
-    fig.update_layout(
-        **LAYOUT_BASE,
-        title=dict(text="⚡ PCDD — SECn vs Productividad Efectiva por Molde",
-                   font=dict(size=16, color=COLORS["naranja"])),
-        xaxis_title="Productividad Efectiva [kg/h]",
-        yaxis_title="SECn — Costo Energético [kWh/kg]",
-        height=500,
-    )
+        ax.plot(x_curva, y_curva, color=C_VERDE, linewidth=2.5,
+                label="Curva SECn esperado", zorder=3)
+
+    ax.scatter(x_pts, y_pts, color=C_NARANJA, s=90, zorder=5,
+               edgecolors="white", linewidths=0.8, marker="D",
+               label="Moldes (datos reales)")
+
+    ax.set_xlabel("Productividad Efectiva [kg/h]", fontsize=11)
+    ax.set_ylabel("SECn — Costo Energético [kWh/kg]", fontsize=11)
+    ax.set_title("PCDD — SECn vs Productividad Efectiva por Molde", fontsize=13, pad=12)
+    ax.legend(facecolor=C_PANEL, edgecolor=C_BORDE, labelcolor=C_TEXTO, fontsize=10)
+    fig.tight_layout()
     return fig
 
 
 def grafico_curva(x, y):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y,
-        mode="lines+markers",
-        line=dict(color=COLORS["verde"], width=3),
-        marker=dict(color=COLORS["verde"], size=6, line=dict(color="white", width=1)),
-        name="SECn esperado",
-        fill="tozeroy",
-        fillcolor="rgba(34,197,94,0.08)",
-        hovertemplate="<b>Flujo:</b> %{x:.2f} kg/h<br><b>SECn esperado:</b> %{y:.4f}<extra></extra>",
-    ))
-    fig.update_layout(
-        **LAYOUT_BASE,
-        title=dict(text="📐 Curva de Referencia — SECn Esperado vs Flujo",
-                   font=dict(size=16, color=COLORS["naranja"])),
-        xaxis_title="Flujo [kg/h]",
-        yaxis_title="SECn Esperado [kWh/kg]",
-        height=500,
-    )
+    fig, ax = plt.subplots(figsize=(10, 5))
+    aplicar_estilo(fig, ax)
+
+    ax.fill_between(x, y, alpha=0.12, color=C_VERDE)
+    ax.plot(x, y, color=C_VERDE, linewidth=2.5, label="SECn esperado")
+    ax.scatter(x, y, color=C_VERDE, s=45, zorder=5,
+               edgecolors="white", linewidths=0.7)
+
+    ax.set_xlabel("Flujo [kg/h]", fontsize=11)
+    ax.set_ylabel("SECn Esperado [kWh/kg]", fontsize=11)
+    ax.set_title("Curva de Referencia — SECn Esperado vs Flujo", fontsize=13, pad=12)
+    ax.legend(facecolor=C_PANEL, edgecolor=C_BORDE, labelcolor=C_TEXTO, fontsize=10)
+    fig.tight_layout()
     return fig
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR  (compartido entre todas las pestañas)
+# SIDEBAR
 # ─────────────────────────────────────────────
 st.title("🏭 Diagnóstico de gestión energética — ESTRA")
 st.markdown("**Obtén datos del sistema energético y analízalos con IA**")
@@ -411,7 +383,6 @@ with st.sidebar:
                 st.session_state.filter_type   = filter_type
                 if filter_type == "Por semana":
                     st.session_state.selected_week = selected_week
-                # Limpiar cachés de otros endpoints
                 for k in ["json_moldes", "json_referencias", "json_linea_base",
                           "json_moldes_viz"]:
                     if k in st.session_state:
@@ -448,11 +419,10 @@ with st.sidebar:
 
 
 # ─────────────────────────────────────────────
-# CONTENIDO PRINCIPAL — DOS PESTAÑAS
+# CONTENIDO PRINCIPAL
 # ─────────────────────────────────────────────
 
 if "json_summary" not in st.session_state:
-    # ── Pantalla de bienvenida ────────────────────────────────────────────
     st.info("👆 Configura las credenciales, selecciona el rango de fechas y haz clic en "
             "'Obtener Datos del Sistema'")
     st.markdown("---")
@@ -471,11 +441,10 @@ if "json_summary" not in st.session_state:
     """)
 
 else:
-    # ── Pestañas principales ──────────────────────────────────────────────
     tab_ia, tab_viz = st.tabs(["🤖 Análisis IA", "📊 Visualizaciones"])
 
     # ════════════════════════════════════════════════════════════════════════
-    # PESTAÑA 1 — ANÁLISIS IA  (código original intacto)
+    # PESTAÑA 1 — ANÁLISIS IA
     # ════════════════════════════════════════════════════════════════════════
     with tab_ia:
         datos_json_summary = st.session_state.json_summary
@@ -587,7 +556,6 @@ else:
                     })
                     st.rerun()
 
-            # Historial de análisis
             if st.session_state.chat_history:
                 st.subheader("💬 Análisis Realizados")
                 for i, chat in enumerate(reversed(st.session_state.chat_history)):
@@ -610,7 +578,7 @@ else:
                         st.divider()
 
     # ════════════════════════════════════════════════════════════════════════
-    # PESTAÑA 2 — VISUALIZACIONES PCLD / PCDD / CURVA
+    # PESTAÑA 2 — VISUALIZACIONES
     # ════════════════════════════════════════════════════════════════════════
     with tab_viz:
         st.header("📊 Visualización de Gráficas Energéticas")
@@ -633,13 +601,13 @@ else:
             horizontal=True,
         )
         clave_map = {
-            "PCLD — Producción vs Consumo":    "PCLD",
-            "PCDD — SECn vs Productividad":    "PCDD",
-            "Curva — SECn Esperado vs Flujo":  "Curva",
+            "PCLD — Producción vs Consumo":   "PCLD",
+            "PCDD — SECn vs Productividad":   "PCDD",
+            "Curva — SECn Esperado vs Flujo": "Curva",
         }
         clave = clave_map[tipo_grafico]
 
-        # ── Botón cargar datos de moldes ──────────────────────────────────
+        # ── Botón cargar datos ────────────────────────────────────────────
         col_btn, col_status = st.columns([1, 3])
         with col_btn:
             refrescar = st.button("🔄 Cargar / Actualizar datos", type="primary",
@@ -671,13 +639,12 @@ else:
 
         st.divider()
 
-        # ── Renderizar según selección ────────────────────────────────────
+        # ── PCLD ─────────────────────────────────────────────────────────
         if clave == "PCLD":
             x, y, a, b = extraer_pcld(moldes_json)
             if x is None:
                 st.error("❌ No se encontró la sección 'PCLD' en la respuesta del endpoint.")
             else:
-                # Métricas
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("📦 Total producción", f"{sum(x):,.1f} kg")
                 c2.metric("⚡ Total consumo",    f"{sum(y):,.2f} kWh")
@@ -686,7 +653,9 @@ else:
                 if a is not None:
                     c4.metric("📈 Pendiente reg.", f"{a:.4f} kWh/kg")
 
-                st.plotly_chart(grafico_pcld(x, y, a, b), use_container_width=True)
+                fig = grafico_pcld(x, y, a, b)
+                st.pyplot(fig)
+                plt.close(fig)
 
                 with st.expander("📋 Ver datos tabulados (PCLD)", expanded=False):
                     df = pd.DataFrame({
@@ -698,19 +667,21 @@ else:
                     ]
                     st.dataframe(df.style.format("{:.3f}"), use_container_width=True)
 
+        # ── PCDD ─────────────────────────────────────────────────────────
         elif clave == "PCDD":
             x_pts, y_pts, x_curva, y_curva = extraer_pcdd(moldes_json)
             if x_pts is None:
                 st.error("❌ No se encontró la sección 'PCDD' en la respuesta del endpoint.")
             else:
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("🔩 Nº moldes",          len(x_pts))
-                c2.metric("⚡ SECn mínimo",         f"{min(y_pts):.4f}")
-                c3.metric("⚡ SECn máximo",         f"{max(y_pts):.4f}")
-                c4.metric("🏃 Prod. máx. [kg/h]",  f"{max(x_pts):.2f}")
+                c1.metric("🔩 Nº moldes",         len(x_pts))
+                c2.metric("⚡ SECn mínimo",        f"{min(y_pts):.4f}")
+                c3.metric("⚡ SECn máximo",        f"{max(y_pts):.4f}")
+                c4.metric("🏃 Prod. máx. [kg/h]", f"{max(x_pts):.2f}")
 
-                st.plotly_chart(grafico_pcdd(x_pts, y_pts, x_curva, y_curva),
-                                use_container_width=True)
+                fig = grafico_pcdd(x_pts, y_pts, x_curva, y_curva)
+                st.pyplot(fig)
+                plt.close(fig)
 
                 with st.expander("📋 Ver datos tabulados (PCDD)", expanded=False):
                     df = pd.DataFrame({
@@ -719,6 +690,7 @@ else:
                     })
                     st.dataframe(df.style.format("{:.4f}"), use_container_width=True)
 
+        # ── Curva ─────────────────────────────────────────────────────────
         elif clave == "Curva":
             x, y = extraer_curva(moldes_json)
             if x is None:
@@ -729,7 +701,9 @@ else:
                 c2.metric("📉 SECn mín. esperado", f"{min(y):.4f}")
                 c3.metric("📈 Flujo máximo",        f"{max(x):.2f} kg/h")
 
-                st.plotly_chart(grafico_curva(x, y), use_container_width=True)
+                fig = grafico_curva(x, y)
+                st.pyplot(fig)
+                plt.close(fig)
 
                 with st.expander("📋 Ver datos tabulados (Curva)", expanded=False):
                     df = pd.DataFrame({
@@ -751,3 +725,4 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
